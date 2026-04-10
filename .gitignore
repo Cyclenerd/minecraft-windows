@@ -1,0 +1,78 @@
+# .gitignore for PaperMC Minecraft Server
+
+# Java installation directory
+java/
+corretto.zip
+
+# Server directory (contains generated files, worlds, plugins)
+server/
+
+# Generated start script
+start-server.ps1
+
+# JAR files (except in repository root if needed)
+*.jar
+
+# Temporary downloads
+*.zip
+*.jar.tmp
+
+# Server logs and output
+*.log
+server-output.log
+server-error.log
+
+# Crash reports and debug files
+crash-reports/
+*.hprof
+*.nps
+*.mdmp
+
+# Minecraft world data
+world/
+world_nether/
+world_the_end/
+
+# Player data
+banned-ips.json
+banned-players.json
+ops.json
+whitelist.json
+usercache.json
+
+# Configuration backups
+*.properties.bak
+*.yml.bak
+*.json.bak
+
+# Backup archives
+backup-*.zip
+*.backup
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.directory
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.old

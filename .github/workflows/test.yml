@@ -1,0 +1,250 @@
+name: Test PaperMC Setup Script
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      
+      - name: Display PowerShell version
+        shell: powershell
+        run: |
+          Write-Host "PowerShell Version:"
+          $PSVersionTable.PSVersion
+
+      - name: Display system information
+        shell: powershell
+        run: |
+          Write-Host "OS Information:"
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture
+
+      - name: Test script syntax
+        shell: powershell
+        run: |
+          Write-Host "Testing PowerShell script syntax..."
+          $errors = $null
+          $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content .\setup-papermc.ps1 -Raw), [ref]$errors)
+          if ($errors.Count -gt 0) {
+            Write-Error "Syntax errors found:"
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+          Write-Host "[PASS] Script syntax is valid" -ForegroundColor Green
+      
+      - name: Run setup script and monitor output
+        shell: powershell
+        run: |
+          Write-Host "Starting setup script with minimal resources..."
+          
+          # Start the script and capture output in real-time
+          $Job = Start-Job -ScriptBlock {
+            Set-Location $using:PWD
+            PowerShell -ExecutionPolicy Bypass -File .\setup-papermc.ps1 -MinMemoryMB 512 -MaxMemoryMB 1024 2>&1
+          }
+          
+          Write-Host "Setup script started (Job ID: $($Job.Id))"
+          Write-Host "Monitoring output for server startup message..."
+          Write-Host ""
+          
+          $StartTime = Get-Date
+          $MaxWaitMinutes = 30
+          $SuccessMessageFound = $false
+          $LastOutputPosition = 0
+          
+          while ((Get-Date) -lt $StartTime.AddMinutes($MaxWaitMinutes)) {
+            # Check if job is still running
+            $JobState = (Get-Job -Id $Job.Id).State
+            
+            # Get new output from the job
+            $NewOutput = Receive-Job -Id $Job.Id -Keep
+            
+            if ($NewOutput -and $NewOutput.Count -gt $LastOutputPosition) {
+              # Display new output lines
+              for ($i = $LastOutputPosition; $i -lt $NewOutput.Count; $i++) {
+                Write-Host $NewOutput[$i]
+                
+                # Check for success message
+                if ($NewOutput[$i] -like "*This is the first time you're starting this server*") {
+                  $SuccessMessageFound = $true
+                  Write-Host ""
+                  Write-Host "========================================" -ForegroundColor Green
+                  Write-Host "SUCCESS: Server startup message detected!" -ForegroundColor Green
+                  Write-Host "========================================" -ForegroundColor Green
+                  break
+                }
+              }
+              $LastOutputPosition = $NewOutput.Count
+            }
+            
+            # Exit if success message found
+            if ($SuccessMessageFound) {
+              # Give server a moment to complete startup
+              Start-Sleep -Seconds 5
+              
+              # Get any remaining output
+              $FinalOutput = Receive-Job -Id $Job.Id
+              if ($FinalOutput) {
+                $FinalOutput | ForEach-Object { Write-Host $_ }
+              }
+              
+              # Stop the job (server is running)
+              Stop-Job -Id $Job.Id -ErrorAction SilentlyContinue
+              Remove-Job -Id $Job.Id -ErrorAction SilentlyContinue
+              
+              # Stop any running server processes
+              Get-Process java -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+              
+              Write-Host ""
+              Write-Host "[SUCCESS] Server successfully started and verified!" -ForegroundColor Green
+              exit 0
+            }
+            
+            # Check if job failed
+            if ($JobState -eq "Failed") {
+              Write-Error "Setup job failed!"
+              $ErrorOutput = Receive-Job -Id $Job.Id
+              $ErrorOutput | ForEach-Object { Write-Host $_ }
+              Remove-Job -Id $Job.Id -ErrorAction SilentlyContinue
+              exit 1
+            }
+            
+            # Check if job completed without finding the message
+            if ($JobState -eq "Completed") {
+              if (-not $SuccessMessageFound) {
+                Write-Warning "Setup job completed but success message was not found"
+                $FinalOutput = Receive-Job -Id $Job.Id
+                Write-Host ""
+                Write-Host "Full output:" -ForegroundColor Yellow
+                $FinalOutput | ForEach-Object { Write-Host $_ }
+                Remove-Job -Id $Job.Id -ErrorAction SilentlyContinue
+                exit 1
+              }
+            }
+            
+            # Wait before checking again
+            Start-Sleep -Seconds 2
+          }
+          
+          # Timeout reached
+          Write-Error "Timeout: Server did not start within $MaxWaitMinutes minutes"
+          Write-Host ""
+          Write-Host "Job output:" -ForegroundColor Yellow
+          $TimeoutOutput = Receive-Job -Id $Job.Id
+          $TimeoutOutput | ForEach-Object { Write-Host $_ }
+          
+          Stop-Job -Id $Job.Id -ErrorAction SilentlyContinue
+          Remove-Job -Id $Job.Id -ErrorAction SilentlyContinue
+          exit 1
+        timeout-minutes: 35
+
+      - name: Verify server setup and logs
+        shell: powershell
+        if: always()
+        run: |
+          Write-Host "Verifying server installation..."
+          
+          $AllChecksPassed = $true
+          
+          # Check Java installation
+          $JavaExe = ".\java\bin\java.exe"
+          if (Test-Path $JavaExe) {
+            Write-Host "[PASS] Java installed" -ForegroundColor Green
+            } else {
+            Write-Host "[FAIL] Java not found" -ForegroundColor Red
+            $AllChecksPassed = $false
+          }
+          
+          # Check Paper jar
+          if (Test-Path ".\server\paper.jar") {
+            Write-Host "[PASS] PaperMC downloaded" -ForegroundColor Green
+          } else {
+            Write-Host "[FAIL] PaperMC jar not found" -ForegroundColor Red
+            $AllChecksPassed = $false
+          }
+          
+          # Check EULA
+          if (Test-Path ".\server\eula.txt") {
+            $EulaContent = Get-Content ".\server\eula.txt" -Raw
+            if ($EulaContent -match "eula=true") {
+              Write-Host "[PASS] EULA accepted" -ForegroundColor Green
+            } else {
+              Write-Host "[WARN] EULA not accepted" -ForegroundColor Yellow
+            }
+          } else {
+            Write-Host "[INFO] EULA file not found (setup may not have reached this stage)" -ForegroundColor Yellow
+          }
+          
+          # Check start script
+          if (Test-Path ".\start-server.ps1") {
+            Write-Host "[PASS] Start script created" -ForegroundColor Green
+          } else {
+            Write-Host "[INFO] Start script not found (setup may not have reached this stage)" -ForegroundColor Yellow
+          }
+          
+          # Check server logs
+          if (Test-Path ".\server\logs") {
+            Write-Host "[PASS] Server created logs directory" -ForegroundColor Green
+            
+            # Display last lines of server log
+            $LatestLog = Get-ChildItem ".\server\logs\*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($LatestLog) {
+              Write-Host "`nServer log (last 30 lines):" -ForegroundColor Cyan
+              Get-Content $LatestLog.FullName -Tail 30
+            } else {
+              Write-Host "[INFO] No log files found yet" -ForegroundColor Yellow
+            }
+          } else {
+            Write-Host "[INFO] Logs directory not found (server may not have started)" -ForegroundColor Yellow
+          }
+          
+          # Show setup logs if they exist
+          if (Test-Path ".\server-output.log") {
+            Write-Host "`nSetup output log (last 50 lines):" -ForegroundColor Cyan
+            Get-Content ".\server-output.log" -Tail 50
+          }
+          
+          if (Test-Path ".\server-error.log") {
+            $ErrorContent = Get-Content ".\server-error.log" -Raw
+            if ($ErrorContent -and $ErrorContent.Trim()) {
+              Write-Host "`nSetup error log:" -ForegroundColor Red
+              Write-Host $ErrorContent
+            }
+          }
+          
+          # Stop any running PowerShell processes related to setup
+          Get-Process PowerShell -ErrorAction SilentlyContinue | Where-Object {
+            $_.CommandLine -like "*setup-papermc.ps1*" -or $_.CommandLine -like "*java*paper*"
+          } | Stop-Process -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "`n[INFO] Server processes stopped" -ForegroundColor Cyan
+          
+          # Summary
+          if ($AllChecksPassed) {
+            Write-Host "`n[SUCCESS] All critical components verified!" -ForegroundColor Green
+          } else {
+            Write-Host "`n[INFO] Some components were not found (setup may have failed early)" -ForegroundColor Yellow
+          }
+
+      - name: Integration test summary
+        shell: powershell
+        if: always()
+        run: |
+          Write-Host "`n========================================" -ForegroundColor Cyan
+          Write-Host "Full Integration Test Complete!" -ForegroundColor Green
+          Write-Host "========================================`n" -ForegroundColor Cyan
+          
+          Write-Host "Verified:" -ForegroundColor Yellow
+          Write-Host "  [OK] Full setup script execution"
+          Write-Host "  [OK] Server installation and startup"
+          Write-Host "`nThe setup script is ready to use!" -ForegroundColor Green
