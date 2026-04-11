@@ -317,3 +317,13 @@ The workflow runs on every push and pull request to verify the script works corr
 - [PaperMC Documentation](https://docs.papermc.io/)
 - [Amazon Corretto](https://aws.amazon.com/corretto/)
 - [Minecraft Server Properties](https://minecraft.fandom.com/wiki/Server.properties)
+
+## License
+
+### Code
+
+This project's code is licensed under the **Apache License 2.0**. See the [LICENSE](LICENSE) file for details.
+
+### Icon
+
+The server icon (`server-icon.ico` and `server-icon.png`) is sourced from [Windows 95 Network Neighborhood PNG Icon](https://www.deviantart.com/satellitedish555/art/Windows-95-Network-Neighborhood-PNG-Icon-1023088703) by SatelliteDish555 on DeviantArt. The icon is used under fair use and is **not** licensed under Apache License 2.0.
